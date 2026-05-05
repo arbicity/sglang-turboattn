@@ -331,23 +331,31 @@ class ModelRunnerKVCacheMixin:
         # Plugin KV-cache dtypes (see :mod:`sglang.srt.plugins.kv_cache`)
         # provide a pool_factory that fully owns pool construction. If
         # the user selected a registered plugin name, build the pool
-        # from the factory and skip the built-in dispatch below.
+        # from the factory and skip the built-in dispatch below — but
+        # NOT the allocator wiring that follows it.
+        from sglang.srt.platforms import current_platform
         from sglang.srt.plugins import kv_cache as _plugin_kv
 
-        if _plugin_kv.is_registered(self.server_args.kv_cache_dtype):
+        _plugin_pool_used = _plugin_kv.is_registered(
+            self.server_args.kv_cache_dtype
+        )
+        if _plugin_pool_used:
             self.token_to_kv_pool = _plugin_kv.build_pool(
                 self.server_args.kv_cache_dtype, self
             )
-            return
+        # Validation only applies to the built-in pool families; a plugin
+        # pool (built above) owns its own construction.
+        if not _plugin_pool_used:
+            self._validate_prefill_only_disable_kv_cache_pool_family(
+                is_nsa_model, is_dsv4_model, current_platform
+            )
 
-        # Out-of-tree platform plugin system — used by elif below
-        from sglang.srt.platforms import current_platform
-
-        self._validate_prefill_only_disable_kv_cache_pool_family(
-            is_nsa_model, is_dsv4_model, current_platform
-        )
-
-        if is_dsv4_model:
+        if _plugin_pool_used:
+            # Plugin pool already built above; skip the built-in dispatch but
+            # still fall through to the allocator wiring further down (that is
+            # the whole point of not early-returning here).
+            pass
+        elif is_dsv4_model:
             swa_page_size = self.page_size
             assert swa_page_size == 256, "In paged swa mode, page_size must be 256."
 
