@@ -163,6 +163,22 @@ ATTENTION_BACKEND_CHOICES = [
 
 DETERMINISTIC_ATTENTION_BACKEND_CHOICES = ["flashinfer", "fa3", "triton"]
 
+# argparse choices for ``--kv-cache-dtype``. Plugins may extend at
+# import time via :func:`add_kv_cache_dtype_choices`. The runtime
+# selection logic in
+# :meth:`ModelRunner.configure_kv_cache_dtype` and
+# :meth:`ModelRunnerKVCacheMixin._init_pools` consults
+# :mod:`sglang.srt.plugins.kv_cache` to dispatch to the registered
+# torch dtype + pool factory for plugin-only names.
+KV_CACHE_DTYPE_CHOICES = [
+    "auto",
+    "fp8_e5m2",
+    "fp8_e4m3",
+    "bf16",
+    "bfloat16",
+    "fp4_e2m1",
+]
+
 RADIX_SUPPORTED_DETERMINISTIC_ATTENTION_BACKEND = ["fa3", "triton"]
 
 DISAGG_TRANSFER_BACKEND_CHOICES = ["mooncake", "nixl", "ascend", "fake", "mori"]
@@ -269,6 +285,10 @@ def add_deterministic_attention_backend_choices(choices):
 
 def add_radix_supported_deterministic_attention_backend_choices(choices):
     RADIX_SUPPORTED_DETERMINISTIC_ATTENTION_BACKEND.extend(choices)
+
+
+def add_kv_cache_dtype_choices(choices):
+    KV_CACHE_DTYPE_CHOICES.extend(choices)
 
 
 def add_disagg_transfer_backend_choices(choices):
@@ -820,6 +840,12 @@ class ServerArgs:
         # Set missing default values.
         self._handle_missing_default_values()
 
+        # Bidirectional auto-pairing for plugin KV-cache dtype + attention
+        # backend (see :mod:`sglang.srt.plugins.kv_cache`). Plugin dtypes
+        # may bundle a specific attention backend (e.g. ``tqkv`` paired
+        # with ``turbo-attn``); the two flags should be redundant.
+        self._handle_plugin_kv_cache_pairing()
+
         # Handle device-specific backends.
         self._handle_hpu_backends()
         self._handle_cpu_backends()
@@ -1056,6 +1082,59 @@ class ServerArgs:
             self.prefill_delayer_max_delay_passes = x
         if x := envs.SGLANG_PREFILL_DELAYER_TOKEN_USAGE_LOW_WATERMARK.get():
             self.prefill_delayer_token_usage_low_watermark = x
+
+    def _handle_plugin_kv_cache_pairing(self):
+        """Auto-pair ``--kv-cache-dtype`` and ``--attention-backend`` for
+        plugin dtypes that registered a paired attention backend (e.g.
+        ``tqkv`` paired with ``turbo-attn``).
+
+        Forward (dtype → backend): if the user passed
+        ``--kv-cache-dtype <name>`` for a plugin name that has a paired
+        backend, and ``--attention-backend`` was not set, default the
+        backend to the paired name.
+
+        Reverse (backend → dtype): if the user passed
+        ``--attention-backend <name>`` for a name registered as the
+        paired backend of some plugin dtype, and ``--kv-cache-dtype``
+        is still ``"auto"``, default the dtype to that plugin name.
+
+        Either direction is a no-op when the user explicitly set both
+        flags. The plugin must be import-time registered (entry-point
+        or wrapper script) — registries are consulted at the moment
+        this method runs.
+        """
+        from sglang.srt.plugins import kv_cache as _plugin_kv
+
+        # Forward
+        if (
+            _plugin_kv.is_registered(self.kv_cache_dtype)
+            and self.attention_backend is None
+        ):
+            paired = _plugin_kv.get_paired_attention_backend(self.kv_cache_dtype)
+            if paired is not None:
+                self.attention_backend = paired
+                logger.info(
+                    "Auto-selecting --attention-backend %r for "
+                    "plugin-registered --kv-cache-dtype %r. Pass "
+                    "--attention-backend to override.",
+                    paired,
+                    self.kv_cache_dtype,
+                )
+
+        # Reverse
+        if self.attention_backend is not None and self.kv_cache_dtype == "auto":
+            paired_dtype = _plugin_kv.find_dtype_paired_with_backend(
+                self.attention_backend
+            )
+            if paired_dtype is not None:
+                self.kv_cache_dtype = paired_dtype
+                logger.info(
+                    "Auto-selecting --kv-cache-dtype %r for plugin-paired "
+                    "--attention-backend %r. Pass --kv-cache-dtype to "
+                    "override.",
+                    paired_dtype,
+                    self.attention_backend,
+                )
 
     def _handle_missing_default_values(self):
         if self.tokenizer_path is None:
@@ -4428,8 +4507,8 @@ class ServerArgs:
             "--kv-cache-dtype",
             type=str,
             default=ServerArgs.kv_cache_dtype,
-            choices=["auto", "fp8_e5m2", "fp8_e4m3", "bf16", "bfloat16", "fp4_e2m1"],
-            help='Data type for kv cache storage. "auto" will use model data type. "bf16" or "bfloat16" for BF16 KV cache. "fp8_e5m2" and "fp8_e4m3" are supported for CUDA 11.8+. "fp4_e2m1" (only mxfp4) is supported for CUDA 12.8+ and PyTorch 2.8.0+',
+            choices=KV_CACHE_DTYPE_CHOICES,
+            help='Data type for kv cache storage. "auto" will use model data type. "bf16" or "bfloat16" for BF16 KV cache. "fp8_e5m2" and "fp8_e4m3" are supported for CUDA 11.8+. "fp4_e2m1" (only mxfp4) is supported for CUDA 12.8+ and PyTorch 2.8.0+. Plugins may extend this list via add_kv_cache_dtype_choices().',
         )
         parser.add_argument(
             "--enable-fp32-lm-head",
