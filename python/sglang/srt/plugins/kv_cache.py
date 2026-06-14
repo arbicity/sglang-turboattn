@@ -43,6 +43,7 @@ class _Entry:
     torch_dtype: torch.dtype
     pool_factory: Callable[[Any], Any]
     paired_attention_backend: str | None
+    cell_size_factory: Callable[[Any, int], int] | None = None
 
 
 _REGISTRY: dict[str, _Entry] = {}
@@ -54,6 +55,7 @@ def register(
     torch_dtype: torch.dtype,
     pool_factory: Callable[[Any], Any],
     paired_attention_backend: str | None = None,
+    cell_size_factory: Callable[[Any, int], int] | None = None,
 ) -> None:
     """Register a plugin KV-cache dtype.
 
@@ -75,6 +77,21 @@ def register(
             ``--kv-cache-dtype auto``) auto-defaults the dtype to this
             ``name``. Set to ``None`` for plugins that don't bundle a
             specific attention backend.
+        cell_size_factory: optional ``(runner, num_layers) -> int``
+            callable returning the per-token KV-cache cost in bytes
+            *summed across* ``num_layers`` effective attention layers.
+            When supplied, the memory-pool configurator uses this instead
+            of the built-in ``num_kv_heads * (head_dim + v_head_dim) *
+            num_layers * element_size(dtype)`` estimate. A compressed-KV
+            plugin SHOULD supply this — otherwise SGLang sizes the token
+            budget from the raw storage dtype (e.g. 1 byte/element for
+            ``uint8``), which both wastes capacity (under-counts a 4-bit
+            pack, leaving ~half the KV budget unused) and can over-count
+            (an 8-bit pack plus per-head norm overhead exceeds the uint8
+            estimate, risking OOM). ``num_layers`` is the effective
+            attention-layer count the configurator resolved (excludes
+            Mamba/recurrent layers); the factory must size for exactly
+            those layers.
 
     Idempotent — re-registering the same ``name`` overrides the
     previous entry.
@@ -83,6 +100,7 @@ def register(
         torch_dtype=torch_dtype,
         pool_factory=pool_factory,
         paired_attention_backend=paired_attention_backend,
+        cell_size_factory=cell_size_factory,
     )
 
 
@@ -134,6 +152,25 @@ def find_dtype_paired_with_backend(backend_name: str) -> str | None:
     return None
 
 
+def has_cell_size(name: str) -> bool:
+    """Return ``True`` if ``name`` registered a ``cell_size_factory``."""
+    entry = _REGISTRY.get(name)
+    return entry is not None and entry.cell_size_factory is not None
+
+
+def get_cell_size(name: str, runner: Any, num_layers: int) -> int:
+    """Return the plugin's per-token KV cost (bytes) across ``num_layers``.
+
+    Raises ``KeyError`` if ``name`` is not registered, or ``TypeError``
+    if it registered no ``cell_size_factory`` (guard with
+    :func:`has_cell_size` first).
+    """
+    factory = _REGISTRY[name].cell_size_factory
+    if factory is None:
+        raise TypeError(f"KV-cache plugin {name!r} registered no cell_size_factory")
+    return int(factory(runner, num_layers))
+
+
 __all__ = [
     "register",
     "is_registered",
@@ -142,4 +179,6 @@ __all__ = [
     "build_pool",
     "get_paired_attention_backend",
     "find_dtype_paired_with_backend",
+    "has_cell_size",
+    "get_cell_size",
 ]
