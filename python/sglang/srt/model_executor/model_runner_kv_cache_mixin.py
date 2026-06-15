@@ -290,9 +290,7 @@ class ModelRunnerKVCacheMixin:
         # NOT the allocator wiring that follows it.
         from sglang.srt.plugins import kv_cache as _plugin_kv
 
-        _plugin_pool_used = _plugin_kv.is_registered(
-            self.server_args.kv_cache_dtype
-        )
+        _plugin_pool_used = _plugin_kv.is_registered(self.server_args.kv_cache_dtype)
         # Check out-of-tree platform (plugin system) first
         from sglang.srt.platforms import current_platform
 
