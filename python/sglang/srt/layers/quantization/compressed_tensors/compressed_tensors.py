@@ -492,15 +492,20 @@ class CompressedTensorsConfig(QuantizationConfig):
     def _is_wNa16_group_channel(
         self, weight_quant: BaseModel, input_quant: BaseModel
     ) -> bool:
+        # NOTE: the WNA16 Marlin path supports BOTH symmetric and asymmetric
+        # (zero-point) weight quantization — CompressedTensorsWNA16 allocates a
+        # weight_zero_point param and dispatches uint4 (vs uint4b8) when
+        # symmetric=False. Do NOT gate on symmetry here (matches vLLM upstream),
+        # otherwise asymmetric W4A16 checkpoints (e.g. Qwen3.6-27B) wrongly fall
+        # through to "no compatible scheme".
         input_quant_none = input_quant is None
-        is_symmetric = weight_quant.symmetric
         is_channel_group = (
             weight_quant.strategy == QuantizationStrategy.CHANNEL.value
             or weight_quant.strategy == QuantizationStrategy.GROUP.value
         )
         is_static = not weight_quant.dynamic
 
-        return is_channel_group and input_quant_none and is_symmetric and is_static
+        return is_channel_group and input_quant_none and is_static
 
     def _is_mxint4a16(self, weight_quant: BaseModel, input_quant: BaseModel) -> bool:
         input_quant_none = input_quant is None
@@ -551,6 +556,7 @@ class CompressedTensorsConfig(QuantizationConfig):
                 return CompressedTensorsWNA16(
                     num_bits=weight_quant.num_bits,
                     strategy=weight_quant.strategy,
+                    symmetric=weight_quant.symmetric,
                     group_size=weight_quant.group_size,
                     actorder=weight_quant.actorder,
                 )
