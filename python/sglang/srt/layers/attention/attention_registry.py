@@ -22,6 +22,13 @@ if TYPE_CHECKING:
 
 ATTENTION_BACKENDS = {}
 
+# Names registered via the out-of-tree plugin surface
+# (sglang.srt.plugins.attention.register). Tracked separately so guards
+# that special-case the built-in backend set -- e.g. the hybrid-GDN
+# Blackwell guard in attn_backend_wrapper -- can recognise a registered
+# plugin backend (e.g. tqkv's 'turbo-attn') as a valid full-attn backend.
+PLUGIN_ATTENTION_BACKENDS: set = set()
+
 
 def register_attention_backend(name):
     def decorator(fn):
@@ -290,12 +297,14 @@ def attn_backend_wrapper(runner: "ModelRunner", full_attn_backend: "AttentionBac
         initialize_linear_attn_config(runner.server_args)
         if runner.hybrid_gdn_config is not None:
             if is_blackwell():
+                _ab = runner.server_args.attention_backend
                 assert (
-                    runner.server_args.attention_backend == "triton"
-                    or runner.server_args.attention_backend == "trtllm_mha"
-                    or runner.server_args.attention_backend == "fa4"
-                    or runner.server_args.attention_backend == "flashinfer"
-                ), "triton, trtllm_mha, fa4, or flashinfer backend are the only supported backends on Blackwell GPUs for hybrid GDN models, use --attention-backend to specify the backend."
+                    _ab == "triton"
+                    or _ab == "trtllm_mha"
+                    or _ab == "fa4"
+                    or _ab == "flashinfer"
+                    or _ab in PLUGIN_ATTENTION_BACKENDS
+                ), "triton, trtllm_mha, fa4, flashinfer, or a registered plugin attention backend are the only supported backends on Blackwell GPUs for hybrid GDN models, use --attention-backend to specify the backend."
             if is_npu():
                 assert (
                     runner.server_args.attention_backend == "ascend"
