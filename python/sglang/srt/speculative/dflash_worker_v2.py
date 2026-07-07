@@ -141,6 +141,11 @@ class DFlashWorkerV2(BaseSpecWorker):
         draft_server_args.prefill_attention_backend = None
         draft_server_args.decode_attention_backend = None
         draft_server_args.attention_backend = draft_backend
+        # TQKV seam: the DFlash drafter runs bf16+FlashAttn and must NOT inherit the
+        # target's tqkv KV codec. Without this reset the draft worker's KV cache is
+        # allocated/read as tqkv (target dtype), which the draft attention backend
+        # cannot decode -> garbage drafts. Force the draft KV back to the engine default.
+        draft_server_args.kv_cache_dtype = "auto"
         # Keep draft context length aligned with the target.
         draft_server_args.context_length = (
             target_worker.model_runner.model_config.context_len
