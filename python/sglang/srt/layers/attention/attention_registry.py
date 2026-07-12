@@ -26,7 +26,7 @@ ATTENTION_BACKENDS = {}
 # (sglang.srt.plugins.attention.register). Tracked separately so guards
 # that special-case the built-in backend set -- e.g. the hybrid-GDN
 # Blackwell guard in attn_backend_wrapper -- can recognise a registered
-# plugin backend (e.g. tqkv's 'turbo-attn') as a valid full-attn backend.
+# plugin backend (e.g. tkv's 'turbo-attn') as a valid full-attn backend.
 PLUGIN_ATTENTION_BACKENDS: set = set()
 
 

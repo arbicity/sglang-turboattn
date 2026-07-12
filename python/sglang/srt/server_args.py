@@ -2534,7 +2534,7 @@ class ServerArgs:
 
         # Bidirectional auto-pairing for plugin KV-cache dtype + attention
         # backend (see :mod:`sglang.srt.plugins.kv_cache`). Plugin dtypes
-        # may bundle a specific attention backend (e.g. ``tqkv`` paired
+        # may bundle a specific attention backend (e.g. ``tkv`` paired
         # with ``turbo-attn``); the two flags should be redundant.
         self._handle_plugin_kv_cache_pairing()
 
@@ -2810,7 +2810,7 @@ class ServerArgs:
     def _handle_plugin_kv_cache_pairing(self):
         """Auto-pair ``--kv-cache-dtype`` and ``--attention-backend`` for
         plugin dtypes that registered a paired attention backend (e.g.
-        ``tqkv`` paired with ``turbo-attn``).
+        ``tkv`` paired with ``turbo-attn``).
 
         Forward (dtype → backend): if the user passed
         ``--kv-cache-dtype <name>`` for a plugin name that has a paired
